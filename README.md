@@ -2,6 +2,8 @@
 
 > ASMR 오디오 자동 자막 추출 → 번역 → 영상 합성 파이프라인을 Android(Termux) 위에서 **localhost 웹앱**으로 구동하는 포팅 버전입니다.
 
+**📦 이 저장소:** [anycall6779/ASMR_autoTransalte_auto](https://github.com/anycall6779/ASMR_autoTransalte_auto)
+
 ---
 
 ## 📌 참고(기반) 프로젝트
@@ -11,7 +13,7 @@
 | 원본 레포 | 역할 |
 |-----------|------|
 | [anycall6779/ASMR_translation_auto](https://github.com/anycall6779/ASMR_translation_auto) | ASMR 속삭임 최적화 STT(Whisper) + 오디오 전처리 + Tkinter GUI |
-| [anycall6779/srt_translatefree_gemini](https://github.com/anycall6779/srt_translatefree_gemini) | Playwright로 Gemini 웹을 자동 조작하는 무료 SRT 번역기 |
+| [anycall6779/ASMR_autoTransalte_auto](https://github.com/anycall6779/ASMR_autoTransalte_auto) | Termux 모바일 포팅 — Flask 웹앱 + deep_translator 번역 + CPU-only 영상합성 |
 
 ### 데스크톱 원본 대비 주요 변경점
 
@@ -69,9 +71,9 @@ pkg update -y && pkg upgrade -y
 ### 2단계 — 파일 복사
 
 ```bash
-# PC에서 adb push 또는 termux 내부에서 git clone
-git clone https://github.com/YOUR_REPO/asmr-studio-termux.git
-cd asmr-studio-termux
+# Termux 내부에서 git clone
+git clone https://github.com/anycall6779/ASMR_autoTransalte_auto.git
+cd ASMR_autoTransalte_auto
 ```
 
 ### 3단계 — 의존성 설치
@@ -183,8 +185,8 @@ MIT License
 
 ## 🙏 크레딧
 
-- [anycall6779/ASMR_translation_auto](https://github.com/anycall6779/ASMR_translation_auto) — STT 파이프라인 원본
-- [anycall6779/srt_translatefree_gemini](https://github.com/anycall6779/srt_translatefree_gemini) — 번역 플러그인 원본
+- [anycall6779/ASMR_translation_auto](https://github.com/anycall6779/ASMR_translation_auto) — STT 파이프라인 원본 (Windows Tkinter 버전)
+- [anycall6779/ASMR_autoTransalte_auto](https://github.com/anycall6779/ASMR_autoTransalte_auto) — 이 저장소 (Termux Flask 웹앱 버전)
 - [faster-whisper](https://github.com/SYSTRAN/faster-whisper) — CTranslate2 기반 고속 Whisper
 - [deep-translator](https://github.com/nidhaloff/deep-translator) — 무료 번역 라이브러리
 - [FFmpeg](https://ffmpeg.org) — 영상 합성 엔진
