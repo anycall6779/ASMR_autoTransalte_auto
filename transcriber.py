@@ -106,9 +106,6 @@ def transcribe_audio(
     log_fn=None,
     progress_fn=None,
 ) -> str:
-    from audio_processor import load_audio, apply_denoise, normalize_audio
-    import soundfile as sf
-
     def log(msg):
         if log_fn:
             log_fn(msg)
@@ -120,31 +117,17 @@ def transcribe_audio(
     audio_path = Path(audio_path)
     output_srt = audio_path.with_suffix(".srt")
 
-    log(f"[{audio_path.name}] 오디오 로드 중...")
-    prog(5)
-    audio, sr = load_audio(str(audio_path))
-
-    if use_denoise:
-        log(f"[{audio_path.name}] 노이즈 감소 중... (강도={denoise_strength:.2f})")
-        prog(15)
-        audio = apply_denoise(audio, sr, strength=denoise_strength)
-
-    audio = normalize_audio(audio)
-
-    # whisper.cpp는 16kHz mono WAV 필요
+    # ffmpeg로 16kHz mono WAV 변환 (모든 포맷 지원: m4a/mp3/flac 등)
     tmp_fd, tmp_path = tempfile.mkstemp(suffix=".wav")
     os.close(tmp_fd)
+    log(f"[{audio_path.name}] 오디오 변환 중...")
+    prog(5)
     try:
-        # 16kHz 리샘플 (필요 시)
-        if sr != 16000:
-            try:
-                import scipy.signal as sg
-                samples_16k = int(len(audio) * 16000 / sr)
-                audio = sg.resample(audio, samples_16k).astype(np.float32)
-                sr = 16000
-            except ImportError:
-                pass  # scipy 없으면 원본 sr 그대로 사용
-        sf.write(tmp_path, audio, sr, subtype="PCM_16")
+        subprocess.run(
+            ["ffmpeg", "-y", "-i", str(audio_path),
+             "-ar", "16000", "-ac", "1", "-f", "wav", tmp_path],
+            check=True, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
+        )
 
         backend = detect_whisper_backend()
         log(f"[{audio_path.name}] 백엔드: {backend} / 모델: {model_size}")
@@ -246,10 +229,10 @@ def _transcribe_whisper_cpp(
 
     if model is None:
         log(f"  모델 없음. 다운로드 중: {model_size} ...")
-        dl_script = os.path.join(_WCPP_MODEL_DIR, "..", "models", "download-ggml-model.sh")
-        dl_script = os.path.normpath(dl_script)
+        dl_script = os.path.expanduser("~/whisper.cpp/models/download-ggml-model.sh")
+        wcpp_dir  = os.path.expanduser("~/whisper.cpp")
         subprocess.run(["bash", dl_script, model_size],
-                       cwd=os.path.dirname(binary), check=True)
+                       cwd=wcpp_dir, check=True)
         model = _find_wcpp_model(model_size)
         if model is None:
             raise FileNotFoundError(f"모델 다운로드 실패: {model_size}")
