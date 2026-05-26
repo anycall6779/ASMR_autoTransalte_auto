@@ -82,9 +82,13 @@ cd ASMR_autoTransalte_auto
 bash setup.sh
 ```
 
+> **⚠ Termux 주의:** `pip install --upgrade pip` 는 Termux에서 금지됩니다.  
+> `setup.sh`는 pip 자체를 업그레이드하지 않고 패키지만 직접 설치합니다.
+
 설치 항목:
-- `pkg`: python, ffmpeg, libsndfile
+- `pkg`: python, ffmpeg, libsndfile, git
 - `pip`: flask, deep-translator, soundfile, noisereduce, numpy, faster-whisper
+- `~/.bashrc`: `ASMRT` 단축 명령 자동 등록
 
 ### 4단계 — 실행
 
@@ -94,6 +98,23 @@ bash run.sh
 
 > 서버 시작 후 1.5초 뒤 `termux-open-url`로 기본 브라우저가 자동 열립니다.  
 > 수동 접속: `http://localhost:5000`
+
+---
+
+## ⚡ ASMRT 단축 명령
+
+`setup.sh` 실행 시 `~/.bashrc`에 단축 명령이 자동 등록됩니다.
+
+```bash
+# 설치 직후 1회만 실행 (새 세션부터는 자동 적용)
+source ~/.bashrc
+
+# 이후 어디서든 한 단어로 실행
+ASMRT
+```
+
+`ASMRT` = 프로젝트 폴더로 이동 + `bash run.sh` 자동 실행  
+Termux를 새로 열 때마다 `ASMRT`만 입력하면 바로 서버가 시작됩니다.
 
 ---
 
@@ -169,6 +190,8 @@ faster-whisper>=1.0.0   # 또는 openai-whisper
 
 ## ⚠️ 주의사항
 
+- **pip 업그레이드 금지**: Termux에서 `pip install --upgrade pip`는 오류 발생. `setup.sh`는 이를 건너뜁니다
+- **flask 미설치 시**: `run.sh` 실행 전 반드시 `bash setup.sh` 먼저 실행
 - **메모리**: `large-v3` 모델은 RAM 8GB 이상 필요. Termux 기본 기기는 `small` 권장
 - **속도**: CPU-only이므로 오디오 1분당 STT 약 1~5분 소요 (기기 성능에 따라 다름)
 - **영상 크기**: 무손실 MKV는 파일이 크므로 스토리지 여유 확인 필요
