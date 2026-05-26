@@ -1,0 +1,20 @@
+# ASMR Studio — Termux 의존성
+# pip install -r requirements.txt
+
+# 웹 서버
+flask>=3.0.0
+
+# 번역 (Playwright 대신 — Termux 환경)
+deep-translator>=1.11.0
+
+# 오디오 처리
+soundfile>=0.12.1
+noisereduce>=3.0.2
+numpy>=1.24.0
+
+# STT (둘 중 하나 설치)
+faster-whisper>=1.0.0
+# openai-whisper>=20231117  # faster-whisper 실패 시
+
+# MP3/M4A 추가 포맷 지원 (선택)
+# librosa>=0.10.0

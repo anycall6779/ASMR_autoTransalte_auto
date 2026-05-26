@@ -1,0 +1,446 @@
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>ASMR Studio</title>
+<style>
+:root{--bg:#1e1e2e;--surface:#313244;--overlay:#45475a;--text:#cdd6f4;--sub:#a6adc8;--accent:#89b4fa;--green:#a6e3a1;--red:#f38ba8;--yellow:#f9e2af;}
+*{box-sizing:border-box;margin:0;padding:0}
+body{background:var(--bg);color:var(--text);font-family:"Segoe UI",sans-serif;min-height:100vh;}
+header{background:var(--surface);padding:14px 16px;display:flex;align-items:center;gap:10px;}
+header h1{font-size:1.1rem;color:var(--accent);}
+nav{display:flex;background:var(--surface);border-bottom:2px solid var(--overlay);padding:0 8px;}
+nav button{background:none;border:none;color:var(--sub);padding:10px 16px;cursor:pointer;font-size:.9rem;border-bottom:2px solid transparent;margin-bottom:-2px;transition:.2s;}
+nav button.active{color:var(--accent);border-bottom-color:var(--accent);}
+.tab-panel{display:none;padding:14px;}
+.tab-panel.active{display:block;}
+.card{background:var(--surface);border-radius:10px;padding:14px;margin-bottom:12px;}
+.card h2{font-size:.95rem;color:var(--accent);margin-bottom:10px;}
+label{display:block;font-size:.85rem;color:var(--sub);margin-bottom:4px;}
+select,input[type=number],input[type=range]{background:var(--overlay);color:var(--text);border:none;border-radius:6px;padding:7px 10px;width:100%;margin-bottom:10px;}
+input[type=range]{padding:4px 0;}
+.row{display:flex;gap:8px;flex-wrap:wrap;margin-bottom:10px;}
+.row label{flex:1;min-width:120px;}
+.row select{flex:2;}
+button.btn{background:var(--overlay);color:var(--text);border:none;border-radius:8px;padding:8px 14px;cursor:pointer;font-size:.85rem;transition:.15s;}
+button.btn:hover{background:var(--accent);color:var(--bg);}
+button.btn.primary{background:var(--accent);color:var(--bg);font-weight:600;}
+button.btn.danger{background:var(--red);color:var(--bg);}
+button.btn:disabled{opacity:.4;cursor:not-allowed;}
+.file-list{max-height:220px;overflow-y:auto;}
+.file-item{display:flex;align-items:center;gap:8px;padding:7px 8px;border-radius:6px;font-size:.83rem;cursor:pointer;}
+.file-item:hover{background:var(--overlay);}
+.file-item input[type=checkbox]{accent-color:var(--accent);}
+.file-item .badge{font-size:.7rem;padding:2px 6px;border-radius:4px;background:var(--overlay);color:var(--sub);}
+.file-item .badge.srt{background:#45475a;color:var(--yellow);}
+.file-item .badge.mkv{background:#45475a;color:var(--green);}
+.file-item .badge.audio{background:#45475a;color:var(--accent);}
+.file-item .badge.img{background:#45475a;color:#cba6f7;}
+.log-box{background:#11111b;border-radius:8px;padding:10px;height:180px;overflow-y:auto;font-family:monospace;font-size:.78rem;color:var(--sub);white-space:pre-wrap;}
+progress{width:100%;height:10px;border-radius:5px;margin-bottom:8px;accent-color:var(--accent);}
+.drop-zone{border:2px dashed var(--overlay);border-radius:10px;padding:28px;text-align:center;color:var(--sub);font-size:.9rem;cursor:pointer;transition:.2s;}
+.drop-zone.over{border-color:var(--accent);background:rgba(137,180,250,.07);}
+.pair-row{display:flex;gap:6px;align-items:center;padding:6px 0;border-bottom:1px solid var(--overlay);font-size:.8rem;}
+.pair-row input[type=checkbox]{accent-color:var(--accent);}
+.pair-row span{flex:1;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;}
+.status-tag{font-size:.75rem;padding:2px 7px;border-radius:4px;}
+.ok{background:#1e3a2f;color:var(--green);}
+.err{background:#3a1e1e;color:var(--red);}
+.running{background:#1e2e3a;color:var(--accent);}
+#toast{position:fixed;bottom:20px;left:50%;transform:translateX(-50%);background:var(--surface);color:var(--text);padding:10px 20px;border-radius:8px;font-size:.85rem;display:none;z-index:99;box-shadow:0 4px 20px #0008;}
+</style>
+</head>
+<body>
+<header>
+  <span style="font-size:1.4rem">🎙</span>
+  <h1>ASMR Studio <span style="font-size:.75rem;color:var(--sub);">Termux Web UI</span></h1>
+</header>
+
+<nav>
+  <button class="active" onclick="switchTab('files',this)">📁 파일</button>
+  <button onclick="switchTab('stt',this)">🎤 STT</button>
+  <button onclick="switchTab('translate',this)">🌐 번역</button>
+  <button onclick="switchTab('video',this)">🎬 영상</button>
+</nav>
+
+<!-- ─── 파일 관리 ─── -->
+<div id="tab-files" class="tab-panel active">
+  <div class="card">
+    <h2>파일 업로드</h2>
+    <div class="drop-zone" id="drop-zone" onclick="document.getElementById('file-input').click()">
+      📂 탭하여 파일 선택 또는 여기에 드래그
+      <input type="file" id="file-input" multiple hidden accept="audio/*,video/*,image/*,.srt">
+    </div>
+    <div style="margin-top:8px;display:flex;gap:6px;flex-wrap:wrap;" id="upload-btn-row">
+      <button class="btn primary" id="btn-upload" style="display:none" onclick="doUpload()">⬆ 업로드</button>
+    </div>
+  </div>
+
+  <div class="card">
+    <h2>업로드된 파일 <button class="btn" style="float:right;font-size:.75rem" onclick="loadFiles()">🔄 새로고침</button></h2>
+    <div class="file-list" id="upload-list">로딩 중...</div>
+  </div>
+
+  <div class="card">
+    <h2>출력 파일</h2>
+    <div class="file-list" id="output-list">로딩 중...</div>
+  </div>
+</div>
+
+<!-- ─── STT ─── -->
+<div id="tab-stt" class="tab-panel">
+  <div class="card">
+    <h2>Whisper 설정</h2>
+    <div class="row">
+      <label>모델 크기</label>
+      <select id="stt-model">
+        <option value="tiny">tiny (최소 메모리)</option>
+        <option value="base">base</option>
+        <option value="small" selected>small (권장)</option>
+        <option value="medium">medium</option>
+        <option value="large-v2">large-v2</option>
+        <option value="large-v3-turbo">large-v3-turbo</option>
+      </select>
+    </div>
+    <div class="row">
+      <label>언어</label>
+      <select id="stt-lang">
+        <option value="ja">日本語</option>
+        <option value="ko">한국어</option>
+        <option value="en">English</option>
+        <option value="zh">中文</option>
+      </select>
+    </div>
+    <label><input type="checkbox" id="stt-denoise" checked> 노이즈 감소</label>
+    <div style="margin:8px 0">
+      <label>노이즈 강도: <span id="dn-val">0.55</span></label>
+      <input type="range" min="0.1" max="0.9" step="0.05" value="0.55" oninput="document.getElementById('dn-val').textContent=parseFloat(this.value).toFixed(2)" id="stt-dn-str">
+    </div>
+    <div style="margin:8px 0">
+      <label>VAD 임계값: <span id="vad-val">0.30</span></label>
+      <input type="range" min="0.1" max="0.9" step="0.05" value="0.30" oninput="document.getElementById('vad-val').textContent=parseFloat(this.value).toFixed(2)" id="stt-vad">
+    </div>
+  </div>
+
+  <div class="card">
+    <h2>오디오 파일 선택</h2>
+    <div class="file-list" id="stt-file-list">파일 탭에서 업로드 후 새로고침</div>
+    <button class="btn" style="margin-top:8px" onclick="loadSttFiles()">🔄 새로고침</button>
+  </div>
+
+  <button class="btn primary" style="width:100%;padding:12px;font-size:1rem;margin-top:4px" onclick="startStt()">▶ 자막 생성 시작</button>
+  <div style="margin-top:12px">
+    <progress id="stt-progress" value="0" max="100"></progress>
+    <div class="log-box" id="stt-log"></div>
+  </div>
+</div>
+
+<!-- ─── 번역 ─── -->
+<div id="tab-translate" class="tab-panel">
+  <div class="card">
+    <h2>번역 설정</h2>
+    <div class="row">
+      <label>원본 언어</label>
+      <select id="tr-src">
+        <option value="ja">日本語</option>
+        <option value="ko">한국어</option>
+        <option value="en">English</option>
+        <option value="zh">中文</option>
+      </select>
+    </div>
+    <div class="row">
+      <label>번역 언어</label>
+      <select id="tr-dst">
+        <option value="ko" selected>한국어</option>
+        <option value="en">English</option>
+        <option value="ja">日本語</option>
+        <option value="zh">中文</option>
+        <option value="zh-tw">繁體中文</option>
+      </select>
+    </div>
+  </div>
+
+  <div class="card">
+    <h2>SRT 파일 선택</h2>
+    <div class="file-list" id="tr-file-list">파일 탭에서 업로드 후 새로고침</div>
+    <button class="btn" style="margin-top:8px" onclick="loadTrFiles()">🔄 새로고침</button>
+  </div>
+
+  <button class="btn primary" style="width:100%;padding:12px;font-size:1rem;margin-top:4px" onclick="startTranslate()">▶ 번역 시작</button>
+  <div style="margin-top:12px">
+    <progress id="tr-progress" value="0" max="100"></progress>
+    <div class="log-box" id="tr-log"></div>
+  </div>
+</div>
+
+<!-- ─── 영상 생성 ─── -->
+<div id="tab-video" class="tab-panel">
+  <div class="card">
+    <h2>영상 설정</h2>
+    <div class="row">
+      <label>배경 이미지</label>
+      <select id="vid-image"><option value="">-- 선택 --</option></select>
+    </div>
+    <button class="btn" style="margin-bottom:8px" onclick="loadVidImages()">🔄 이미지 목록 갱신</button>
+    <div style="margin:8px 0">
+      <label>자막 크기: <span id="fs-val">22</span>px</label>
+      <input type="range" min="14" max="48" step="1" value="22" oninput="document.getElementById('fs-val').textContent=this.value" id="vid-fontsize">
+    </div>
+    <div>
+      <label>자막 색상</label>
+      <div style="display:flex;gap:14px;margin-top:4px">
+        <label><input type="radio" name="fcol" value="white" checked> 흰색</label>
+        <label><input type="radio" name="fcol" value="yellow"> 노란색</label>
+        <label><input type="radio" name="fcol" value="cyan"> 하늘색</label>
+      </div>
+    </div>
+  </div>
+
+  <div class="card">
+    <h2>오디오 + SRT 쌍 <span style="font-size:.75rem;color:var(--sub)">(자동 연결)</span></h2>
+    <button class="btn" style="margin-bottom:8px" onclick="loadVidPairs()">🔄 쌍 목록 갱신</button>
+    <div id="vid-pairs-list" style="max-height:240px;overflow-y:auto"></div>
+  </div>
+
+  <button class="btn primary" style="width:100%;padding:12px;font-size:1rem;margin-top:4px" onclick="startVideo()">▶ 영상 생성 시작</button>
+  <div style="margin-top:12px">
+    <progress id="vid-progress" value="0" max="100"></progress>
+    <div class="log-box" id="vid-log"></div>
+  </div>
+</div>
+
+<div id="toast"></div>
+
+<script>
+// ── 탭 전환 ──
+function switchTab(id, btn){
+  document.querySelectorAll('.tab-panel').forEach(p=>p.classList.remove('active'));
+  document.querySelectorAll('nav button').forEach(b=>b.classList.remove('active'));
+  document.getElementById('tab-'+id).classList.add('active');
+  btn.classList.add('active');
+}
+
+// ── 토스트 ──
+function toast(msg, ms=2500){
+  const t=document.getElementById('toast');
+  t.textContent=msg; t.style.display='block';
+  setTimeout(()=>t.style.display='none', ms);
+}
+
+// ── 업로드 ──
+let pendingFiles=[];
+const dropZone=document.getElementById('drop-zone');
+const fileInput=document.getElementById('file-input');
+
+fileInput.addEventListener('change',()=>{
+  pendingFiles=[...fileInput.files];
+  document.getElementById('btn-upload').style.display=pendingFiles.length?'inline-block':'none';
+  dropZone.textContent=`${pendingFiles.length}개 선택됨 — ⬆ 업로드 버튼 클릭`;
+});
+dropZone.addEventListener('dragover',e=>{e.preventDefault();dropZone.classList.add('over');});
+dropZone.addEventListener('dragleave',()=>dropZone.classList.remove('over'));
+dropZone.addEventListener('drop',e=>{
+  e.preventDefault(); dropZone.classList.remove('over');
+  pendingFiles=[...e.dataTransfer.files];
+  document.getElementById('btn-upload').style.display='inline-block';
+  dropZone.textContent=`${pendingFiles.length}개 선택됨 — ⬆ 업로드 버튼 클릭`;
+});
+
+async function doUpload(){
+  if(!pendingFiles.length){toast('파일을 먼저 선택하세요');return;}
+  const fd=new FormData();
+  pendingFiles.forEach(f=>fd.append('files',f));
+  const btn=document.getElementById('btn-upload');
+  btn.disabled=true; btn.textContent='업로드 중...';
+  const r=await fetch('/api/upload',{method:'POST',body:fd});
+  const d=await r.json();
+  btn.disabled=false; btn.textContent='⬆ 업로드';
+  toast(`✓ ${d.saved?.length||0}개 업로드 완료`);
+  pendingFiles=[];
+  dropZone.textContent='📂 탭하여 파일 선택 또는 여기에 드래그';
+  document.getElementById('btn-upload').style.display='none';
+  loadFiles();
+}
+
+// ── 파일 목록 ──
+const AUDIO_EXTS=new Set(['.wav','.mp3','.flac','.m4a','.ogg','.aac','.opus']);
+const IMG_EXTS=new Set(['.jpg','.jpeg','.png','.webp','.bmp']);
+const SRT_EXTS=new Set(['.srt']);
+const VID_EXTS=new Set(['.mkv','.mp4']);
+
+function extBadge(ext){
+  if(AUDIO_EXTS.has(ext)) return `<span class="badge audio">${ext.slice(1)}</span>`;
+  if(SRT_EXTS.has(ext))   return `<span class="badge srt">SRT</span>`;
+  if(VID_EXTS.has(ext))   return `<span class="badge mkv">MKV</span>`;
+  if(IMG_EXTS.has(ext))   return `<span class="badge img">IMG</span>`;
+  return `<span class="badge">${ext.slice(1)}</span>`;
+}
+
+function fmtSize(b){
+  if(b>1024*1024) return (b/1024/1024).toFixed(1)+'MB';
+  return (b/1024).toFixed(0)+'KB';
+}
+
+async function loadFiles(){
+  const r=await fetch('/api/files');
+  const d=await r.json();
+
+  // uploads
+  const ul=document.getElementById('upload-list');
+  ul.innerHTML=d.uploads.length?d.uploads.map(f=>`
+    <div class="file-item">
+      ${extBadge(f.ext)} <span style="flex:1">${f.name}</span>
+      <span style="color:var(--sub);font-size:.75rem">${fmtSize(f.size)}</span>
+      <button class="btn" style="padding:2px 8px;font-size:.72rem" onclick="delFile('${f.name}','uploads')">✕</button>
+    </div>`).join(''):'<div style="color:var(--sub);padding:8px">업로드된 파일 없음</div>';
+
+  // outputs
+  const ol=document.getElementById('output-list');
+  ol.innerHTML=d.outputs.length?d.outputs.map(f=>`
+    <div class="file-item">
+      ${extBadge(f.ext)} <span style="flex:1">${f.name}</span>
+      <span style="color:var(--sub);font-size:.75rem">${fmtSize(f.size)}</span>
+      <a href="/download/${f.name}" class="btn" style="padding:2px 8px;font-size:.72rem;text-decoration:none">⬇</a>
+      <button class="btn" style="padding:2px 8px;font-size:.72rem" onclick="delFile('${f.name}','outputs')">✕</button>
+    </div>`).join(''):'<div style="color:var(--sub);padding:8px">출력 파일 없음</div>';
+}
+
+async function delFile(name,folder){
+  await fetch('/api/delete',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({name,folder})});
+  loadFiles();
+}
+
+// ── STT 파일 목록 ──
+function loadSttFiles(){
+  fetch('/api/files').then(r=>r.json()).then(d=>{
+    const audios=d.uploads.filter(f=>AUDIO_EXTS.has(f.ext));
+    const el=document.getElementById('stt-file-list');
+    el.innerHTML=audios.length?audios.map(f=>`
+      <div class="file-item"><input type="checkbox" class="stt-cb" value="${f.name}">
+        ${extBadge(f.ext)} <span style="flex:1">${f.name}</span>
+        <span style="color:var(--sub);font-size:.75rem">${fmtSize(f.size)}</span>
+      </div>`).join(''):'<div style="color:var(--sub);padding:8px">오디오 파일 없음</div>';
+  });
+}
+
+// ── 번역 파일 목록 ──
+function loadTrFiles(){
+  fetch('/api/files').then(r=>r.json()).then(d=>{
+    const srts=[...d.uploads,...d.outputs].filter(f=>SRT_EXTS.has(f.ext));
+    const el=document.getElementById('tr-file-list');
+    el.innerHTML=srts.length?srts.map(f=>`
+      <div class="file-item"><input type="checkbox" class="tr-cb" value="${f.name}">
+        <span class="badge srt">SRT</span> <span style="flex:1">${f.name}</span>
+        <span style="color:var(--sub);font-size:.75rem">${fmtSize(f.size)}</span>
+      </div>`).join(''):'<div style="color:var(--sub);padding:8px">SRT 파일 없음</div>';
+  });
+}
+
+// ── 영상 이미지/쌍 목록 ──
+function loadVidImages(){
+  fetch('/api/files').then(r=>r.json()).then(d=>{
+    const imgs=d.uploads.filter(f=>IMG_EXTS.has(f.ext));
+    const sel=document.getElementById('vid-image');
+    sel.innerHTML='<option value="">-- 선택 --</option>'+
+      imgs.map(f=>`<option value="${f.name}">${f.name}</option>`).join('');
+  });
+}
+
+function loadVidPairs(){
+  fetch('/api/files').then(r=>r.json()).then(d=>{
+    const audios=d.uploads.filter(f=>AUDIO_EXTS.has(f.ext));
+    const srts=new Set([...d.uploads,...d.outputs].filter(f=>SRT_EXTS.has(f.ext)).map(f=>f.name));
+    const el=document.getElementById('vid-pairs-list');
+    if(!audios.length){el.innerHTML='<div style="color:var(--sub);padding:8px">오디오 파일 없음</div>';return;}
+    el.innerHTML=audios.map(a=>{
+      const stem=a.name.substring(0,a.name.lastIndexOf('.'));
+      // 우선순위: _ko > _en > _ja > 원본
+      const preferred=['ko','en','ja','zh'].map(l=>`${stem}_${l}.srt`).find(s=>srts.has(s))||
+                      (srts.has(stem+'.srt')?stem+'.srt':'');
+      const srtTxt=preferred?`<span style="color:var(--green)">${preferred}</span>`:'<span style="color:var(--red)">SRT 없음</span>';
+      return `<div class="pair-row">
+        <input type="checkbox" class="vid-cb" value="${a.name}" data-srt="${preferred}" ${preferred?'checked':''}>
+        <span>${a.name}</span><span>${srtTxt}</span>
+      </div>`;
+    }).join('');
+  });
+}
+
+// ── SSE 진행률 ──
+function subscribeTask(tid, logEl, progEl, onDone){
+  const es=new EventSource(`/stream/${tid}`);
+  es.onmessage=e=>{
+    const msg=JSON.parse(e.data);
+    if(msg.type==='log'){
+      logEl.textContent+=msg.data+'\n';
+      logEl.scrollTop=logEl.scrollHeight;
+    } else if(msg.type==='progress'){
+      progEl.value=msg.data;
+    } else if(msg.type==='done'){
+      progEl.value=100;
+      es.close();
+      if(msg.error) toast('❌ 오류: '+msg.error, 4000);
+      else { toast('✅ '+msg.data); onDone&&onDone(); }
+    }
+  };
+  es.onerror=()=>es.close();
+}
+
+// ── STT 시작 ──
+async function startStt(){
+  const files=[...document.querySelectorAll('.stt-cb:checked')].map(c=>c.value);
+  if(!files.length){toast('파일을 선택하세요');return;}
+  const body={
+    files, model_size:document.getElementById('stt-model').value,
+    language:document.getElementById('stt-lang').value,
+    use_denoise:document.getElementById('stt-denoise').checked,
+    denoise_strength:parseFloat(document.getElementById('stt-dn-str').value),
+    vad_threshold:parseFloat(document.getElementById('stt-vad').value),
+  };
+  const logEl=document.getElementById('stt-log');
+  logEl.textContent=''; document.getElementById('stt-progress').value=0;
+  const r=await fetch('/api/transcribe',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(body)});
+  const d=await r.json();
+  if(d.error){toast('❌ '+d.error);return;}
+  subscribeTask(d.task_id, logEl, document.getElementById('stt-progress'), loadFiles);
+}
+
+// ── 번역 시작 ──
+async function startTranslate(){
+  const files=[...document.querySelectorAll('.tr-cb:checked')].map(c=>c.value);
+  if(!files.length){toast('SRT 파일을 선택하세요');return;}
+  const body={files, src_lang:document.getElementById('tr-src').value, dst_lang:document.getElementById('tr-dst').value};
+  const logEl=document.getElementById('tr-log');
+  logEl.textContent=''; document.getElementById('tr-progress').value=0;
+  const r=await fetch('/api/translate',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(body)});
+  const d=await r.json();
+  if(d.error){toast('❌ '+d.error);return;}
+  subscribeTask(d.task_id, logEl, document.getElementById('tr-progress'), loadFiles);
+}
+
+// ── 영상 생성 시작 ──
+async function startVideo(){
+  const pairs=[...document.querySelectorAll('.vid-cb:checked')].map(c=>({audio:c.value,srt:c.dataset.srt})).filter(p=>p.srt);
+  if(!pairs.length){toast('오디오+SRT 쌍을 선택하세요');return;}
+  const image=document.getElementById('vid-image').value;
+  if(!image){toast('배경 이미지를 선택하세요');return;}
+  const font_color=document.querySelector('input[name=fcol]:checked').value;
+  const body={pairs, image, font_size:parseInt(document.getElementById('vid-fontsize').value), font_color};
+  const logEl=document.getElementById('vid-log');
+  logEl.textContent=''; document.getElementById('vid-progress').value=0;
+  const r=await fetch('/api/create_video',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(body)});
+  const d=await r.json();
+  if(d.error){toast('❌ '+d.error);return;}
+  subscribeTask(d.task_id, logEl, document.getElementById('vid-progress'), loadFiles);
+}
+
+// 초기 로드
+loadFiles();
+loadSttFiles();
+loadTrFiles();
+loadVidImages();
+loadVidPairs();
+</script>
+</body>
+</html>
