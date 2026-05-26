@@ -6,21 +6,49 @@ ASMR 오디오 전처리 모듈 (Termux / CPU-only)
 - 정규화
 """
 
+import os
+import subprocess
+import tempfile
 import numpy as np
+
+
+def _load_via_ffmpeg(file_path: str):
+    """
+    ffmpeg로 임시 WAV 변환 후 읽기.
+    m4a / mp3 / aac 등 soundfile 미지원 포맷용.
+    """
+    import soundfile as sf
+    tmp = tempfile.NamedTemporaryFile(suffix=".wav", delete=False)
+    tmp.close()
+    try:
+        subprocess.run(
+            ["ffmpeg", "-y", "-i", str(file_path),
+             "-ar", "44100", "-ac", "1", "-f", "wav", tmp.name],
+            check=True,
+            stdout=subprocess.DEVNULL,
+            stderr=subprocess.DEVNULL,
+        )
+        audio, sr = sf.read(tmp.name, dtype="float32", always_2d=False)
+    finally:
+        try:
+            os.unlink(tmp.name)
+        except OSError:
+            pass
+    return audio, sr
 
 
 def load_audio(file_path: str):
     """
     오디오 파일 로드 (WAV / MP3 / FLAC / M4A 등)
     반환: (audio: np.ndarray float32, sample_rate: int)
+    폴백 순서: soundfile → ffmpeg 변환 (librosa/av 불필요)
     """
     try:
         import soundfile as sf
         audio, sr = sf.read(str(file_path), dtype="float32", always_2d=False)
     except Exception:
-        import librosa
-        audio, sr = librosa.load(str(file_path), sr=None, mono=False)
-        audio = np.asarray(audio, dtype=np.float32)
+        # soundfile 미지원 포맷(m4a, mp3 등) → ffmpeg 폴백
+        audio, sr = _load_via_ffmpeg(str(file_path))
 
     # 스테레오 / 멀티채널 → 모노 (채널 평균)
     if audio.ndim > 1:

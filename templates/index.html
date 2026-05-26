@@ -124,7 +124,11 @@ progress{width:100%;height:10px;border-radius:5px;margin-bottom:8px;accent-color
   </div>
 
   <div class="card">
-    <h2>오디오 파일 선택</h2>
+    <h2>오디오 파일 선택
+      <label style="float:right;font-size:.8rem;cursor:pointer;color:var(--accent)">
+        <input type="checkbox" id="stt-all" onchange="toggleAll('stt-cb',this.checked)" style="accent-color:var(--accent)"> 전체선택
+      </label>
+    </h2>
     <div class="file-list" id="stt-file-list">파일 탭에서 업로드 후 새로고침</div>
     <button class="btn" style="margin-top:8px" onclick="loadSttFiles()">🔄 새로고침</button>
   </div>
@@ -162,7 +166,11 @@ progress{width:100%;height:10px;border-radius:5px;margin-bottom:8px;accent-color
   </div>
 
   <div class="card">
-    <h2>SRT 파일 선택</h2>
+    <h2>SRT 파일 선택
+      <label style="float:right;font-size:.8rem;cursor:pointer;color:var(--accent)">
+        <input type="checkbox" id="tr-all" onchange="toggleAll('tr-cb',this.checked)" style="accent-color:var(--accent)"> 전체선택
+      </label>
+    </h2>
     <div class="file-list" id="tr-file-list">파일 탭에서 업로드 후 새로고침</div>
     <button class="btn" style="margin-top:8px" onclick="loadTrFiles()">🔄 새로고침</button>
   </div>
@@ -198,7 +206,11 @@ progress{width:100%;height:10px;border-radius:5px;margin-bottom:8px;accent-color
   </div>
 
   <div class="card">
-    <h2>오디오 + SRT 쌍 <span style="font-size:.75rem;color:var(--sub)">(자동 연결)</span></h2>
+    <h2>오디오 + SRT 쌍 <span style="font-size:.75rem;color:var(--sub)">(자동 연결)</span>
+      <label style="float:right;font-size:.8rem;cursor:pointer;color:var(--accent)">
+        <input type="checkbox" id="vid-all" onchange="toggleAll('vid-cb',this.checked)" style="accent-color:var(--accent)"> 전체선택
+      </label>
+    </h2>
     <button class="btn" style="margin-bottom:8px" onclick="loadVidPairs()">🔄 쌍 목록 갱신</button>
     <div id="vid-pairs-list" style="max-height:240px;overflow-y:auto"></div>
   </div>
@@ -213,6 +225,11 @@ progress{width:100%;height:10px;border-radius:5px;margin-bottom:8px;accent-color
 <div id="toast"></div>
 
 <script>
+// ── 전체 선택 토글 ──
+function toggleAll(cls, checked){
+  document.querySelectorAll('.'+cls).forEach(cb=>cb.checked=checked);
+}
+
 // ── 탭 전환 ──
 function switchTab(id, btn){
   document.querySelectorAll('.tab-panel').forEach(p=>p.classList.remove('active'));
