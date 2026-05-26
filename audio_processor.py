@@ -37,11 +37,13 @@ def apply_denoise(audio: np.ndarray, sr: int, strength: float = 0.55) -> np.ndar
     ASMR 전용 노이즈 감소.
     strength: 0.0(감소 없음) ~ 1.0(최대), 기본 0.55
     너무 높으면 속삭임 음성 손상.
+    noisereduce / scipy 미설치 시 원본 오디오 반환 (기능 스킵).
     """
     try:
         import noisereduce as nr
-    except ImportError:
-        return audio
+        import scipy  # scipy 없으면 noisereduce 런타임 오류 → 조기 차단
+    except (ImportError, ModuleNotFoundError):
+        return audio  # 노이즈감소 스킵, 앱 정상 동작 유지
 
     prop_decrease = max(0.0, min(1.0, strength))
     denoised = nr.reduce_noise(

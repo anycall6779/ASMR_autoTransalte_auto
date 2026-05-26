@@ -86,9 +86,11 @@ bash setup.sh
 > `setup.sh`는 pip 자체를 업그레이드하지 않고 패키지만 직접 설치합니다.
 
 설치 항목:
-- `pkg`: python, ffmpeg, libsndfile, git
-- `pip`: flask, deep-translator, soundfile, noisereduce, numpy, faster-whisper
+- `pkg`: python, ffmpeg, libsndfile, git, **python-numpy**, **python-scipy** (사전 컴파일 바이너리)
+- `pip`: flask, deep-translator, soundfile, noisereduce, faster-whisper (`--prefer-binary` 옵션으로 소스 컴파일 없이 설치)
 - `~/.bashrc`: `ASMRT` 단축 명령 자동 등록
+
+> **속도 개선 포인트**: `scipy`/`numpy`를 `pkg`로 미리 설치하면 pip이 소스를 컴파일하지 않아 설치 시간이 크게 단축됩니다.
 
 ### 4단계 — 실행
 
