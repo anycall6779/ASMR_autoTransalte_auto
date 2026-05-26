@@ -30,7 +30,36 @@ ASMR_PROMPTS = {
 }
 
 
+def _ensure_numba_mock():
+    """
+    openai-whisper의 timing.py가 numba를 무조건 import함.
+    numba 미설치 시 mock으로 대체하여 import 성공.
+    word_timestamps=False 사용 시 numba JIT 실제 호출 없음.
+    """
+    import sys
+    try:
+        import numba  # noqa
+    except ImportError:
+        class _JitDecorator:
+            def __call__(self, *a, **kw):
+                def dec(fn): return fn
+                return dec
+            def __getattr__(self, name):
+                return self
+        _jit = _JitDecorator()
+        mock = type('numba', (), {
+            'jit': _jit,
+            'float32': float,
+            'int32': int,
+            'int64': int,
+        })()
+        sys.modules.setdefault('numba', mock)
+        sys.modules.setdefault('numba.core', mock)
+        sys.modules.setdefault('numba.core.types', mock)
+
+
 def detect_whisper_backend() -> str:
+    _ensure_numba_mock()
     try:
         import faster_whisper  # noqa
         return "faster_whisper"
@@ -195,6 +224,7 @@ def _transcribe_openai_whisper(
     audio_path, model_size, language,
     no_speech_threshold, log, prog,
 ):
+    _ensure_numba_mock()  # numba mock 주입 후 import
     import whisper
 
     model = whisper.load_model(model_size)
