@@ -1,23 +1,43 @@
 # -*- coding: utf-8 -*-
 """
-ASMR 번역 모듈 (Termux용 — deep_translator 기반)
-Playwright / Gemini Web 대신 Google Translate 무료 API 사용.
+ASMR 번역 모듈 (Termux용 — API 불필요, 완전 무료)
+
+번역 백엔드 (자동 선택):
+  1순위: Helsinki-NLP/opus-mt 로컬 AI 모델 (오프라인, sentencepiece 필요)
+  2순위: Google Translate 무료 (온라인, API 키 불필요, deep-translator)
+
+설치:
+  pip install sentencepiece   # 로컬 AI 번역용 (권장)
+  pip install deep-translator # Google Translate 폴백용
 """
 
+import os
 import re
+import time
 from pathlib import Path
 from typing import List, Optional, Callable, Tuple
 
-BATCH_SIZE = 40  # deep_translator 한 번 요청 크기
+os.environ.setdefault("HF_HUB_DISABLE_XET", "1")
 
-# deep_translator 언어코드 매핑
-LANG_MAP = {
-    "ja":    "ja",
-    "ko":    "ko",
-    "en":    "en",
-    "zh":    "zh-CN",
-    "zh-tw": "zh-TW",
+BATCH_SIZE = 16  # MarianMT 최적 배치 크기
+
+OPUS_MT_MODELS = {
+    ("ja", "ko"): "Helsinki-NLP/opus-mt-ja-ko",
+    ("ja", "en"): "Helsinki-NLP/opus-mt-ja-en",
+    ("en", "ko"): "Helsinki-NLP/opus-mt-en-ko",
+    ("ko", "en"): "Helsinki-NLP/opus-mt-ko-en",
+    ("ko", "ja"): "Helsinki-NLP/opus-mt-ko-jap",
+    ("en", "ja"): "Helsinki-NLP/opus-mt-en-jap",
+    ("zh", "en"): "Helsinki-NLP/opus-mt-zh-en",
+    ("zh", "ko"): "Helsinki-NLP/opus-mt-zh-ko",
 }
+
+GOOGLE_LANG = {
+    "ja": "ja", "ko": "ko", "en": "en",
+    "zh": "zh-CN", "zh-tw": "zh-TW",
+}
+
+_model_cache: dict = {}
 
 
 # ── SRT 파싱 / 빌드 ──────────────────────────────────────
@@ -40,52 +60,73 @@ def _build_srt(blocks: List[Tuple[str, str, str]]) -> str:
     return "\n\n".join(f"{idx}\n{tc}\n{text}" for idx, tc, text in blocks)
 
 
-# ── 배치 번역 ─────────────────────────────────────────────
-def _translate_batch(
-    texts: List[str],
-    src: str,
-    dst: str,
-    log_fn=None,
-) -> List[str]:
-    """deep_translator로 텍스트 리스트 번역 (구분자 합치기 → 1번 API 요청)"""
-    try:
-        from deep_translator import GoogleTranslator
-    except ImportError:
-        if log_fn:
-            log_fn("  ⚠ deep-translator 미설치: pip install deep-translator")
-        return list(texts)
+# ── 로컬 opus-mt 번역 ────────────────────────────────────
+def _load_opus_mt(src: str, dst: str, log_fn=None):
+    key = (src, dst)
+    if key in _model_cache:
+        return _model_cache[key]
 
-    src_code = LANG_MAP.get(src, src)
-    dst_code = LANG_MAP.get(dst, dst)
-    translator = GoogleTranslator(source=src_code, target=dst_code)
+    model_id = OPUS_MT_MODELS.get(key)
+    if not model_id:
+        raise ValueError(f"지원 안 하는 언어 쌍: {src}→{dst}")
 
-    # 텍스트 내 줄바꿈 → 공백 치환 후 구분자로 합쳐서 1번 요청
-    SEP = " ▶ "
-    combined = SEP.join(t.replace("\n", " ") for t in texts)
-    try:
-        translated_combined = translator.translate(combined)
-        if translated_combined:
-            parts = translated_combined.split(SEP)
-            if len(parts) == len(texts):
-                return [p.strip() for p in parts]
-    except Exception as e:
-        if log_fn:
-            log_fn(f"  ⚠ 배치 번역 실패, 개별 시도: {e}")
+    if log_fn:
+        log_fn(f"  번역 모델 로딩: {model_id}")
+        log_fn("  (첫 실행 시 HuggingFace 자동 다운로드 ~300MB)")
 
-    # 폴백: 개별 번역
+    from transformers import MarianMTModel, MarianTokenizer
+    tokenizer = MarianTokenizer.from_pretrained(model_id)
+    model = MarianMTModel.from_pretrained(model_id)
+    _model_cache[key] = (tokenizer, model)
+    return tokenizer, model
+
+
+def _translate_local(texts: List[str], src: str, dst: str, log_fn=None) -> List[str]:
+    import torch
+    tokenizer, model = _load_opus_mt(src, dst, log_fn)
+    inputs = tokenizer(
+        texts,
+        return_tensors="pt",
+        padding=True,
+        truncation=True,
+        max_length=512,
+    )
+    with torch.no_grad():
+        translated_tokens = model.generate(**inputs)
+    return tokenizer.batch_decode(translated_tokens, skip_special_tokens=True)
+
+
+# ── Google Translate 무료 fallback ───────────────────────
+def _translate_google(texts: List[str], src: str, dst: str, log_fn=None) -> List[str]:
+    from deep_translator import GoogleTranslator
+    gl_src = GOOGLE_LANG.get(src, src)
+    gl_dst = GOOGLE_LANG.get(dst, dst)
+    translator = GoogleTranslator(source=gl_src, target=gl_dst)
     results = []
     for text in texts:
         try:
-            translated = translator.translate(text)
-            results.append(translated if translated else text)
+            translated = translator.translate(text.strip()) or text
+            results.append(translated)
         except Exception as e:
             if log_fn:
-                log_fn(f"  ⚠ 번역 실패 (원본 유지): {e}")
+                log_fn(f"  ⚠ 번역 오류: {e}")
             results.append(text)
+        time.sleep(0.12)
     return results
 
 
-# ── 메인 함수 ─────────────────────────────────────────────
+# ── 백엔드 선택 ──────────────────────────────────────────
+def _detect_backend(src: str, dst: str) -> str:
+    if (src, dst) not in OPUS_MT_MODELS:
+        return "google"
+    try:
+        import sentencepiece  # noqa
+        return "local"
+    except ImportError:
+        return "google"
+
+
+# ── 메인 함수 ────────────────────────────────────────────
 def translate_srt(
     srt_path: str,
     src_lang: str = "ja",
@@ -94,6 +135,7 @@ def translate_srt(
     log_fn: Optional[Callable] = None,
     progress_fn: Optional[Callable] = None,
     stop_event=None,
+    **kwargs,  # api_key 등 미사용 인자 무시
 ) -> str:
     def log(msg):
         if log_fn:
@@ -102,6 +144,8 @@ def translate_srt(
     def prog(pct: float):
         if progress_fn:
             progress_fn(pct)
+
+    backend = _detect_backend(src_lang, dst_lang)
 
     src = Path(srt_path)
     with open(src, encoding="utf-8-sig", errors="replace") as f:
@@ -112,10 +156,17 @@ def translate_srt(
         raise ValueError(f"SRT 파싱 실패: {src.name}")
 
     total = len(blocks)
-    log(f"[{src.name}] {total}개 자막 블록 번역 시작 (Google Translate)")
 
     if output_path is None:
         output_path = str(src.parent / f"{src.stem}_{dst_lang}.srt")
+
+    if backend == "local":
+        log(f"[{src.name}] {total}개 자막 — 로컬 AI 번역 ({src_lang}→{dst_lang})")
+    else:
+        if (src_lang, dst_lang) in OPUS_MT_MODELS:
+            log("  ⚠ sentencepiece 미설치 → Google Translate 사용")
+            log("  (pip install sentencepiece 후 고품질 로컬 모델 사용 가능)")
+        log(f"[{src.name}] {total}개 자막 — Google Translate ({src_lang}→{dst_lang})")
 
     translated: List[Tuple[str, str, str]] = []
 
@@ -128,10 +179,18 @@ def translate_srt(
         batch = blocks[start:end]
         texts = [b[2] for b in batch]
 
-        log(f"  번역 {start + 1}~{end}/{total}")
+        log(f"  {start + 1}~{end}/{total}")
         prog(start / total * 95)
 
-        t_texts = _translate_batch(texts, src_lang, dst_lang, log_fn)
+        if backend == "local":
+            try:
+                t_texts = _translate_local(texts, src_lang, dst_lang, log)
+            except Exception as e:
+                log(f"  로컬 번역 오류 → Google Translate 전환: {e}")
+                backend = "google"
+                t_texts = _translate_google(texts, src_lang, dst_lang, log)
+        else:
+            t_texts = _translate_google(texts, src_lang, dst_lang, log)
 
         for (idx, tc, _orig), t in zip(batch, t_texts):
             translated.append((idx, tc, t))

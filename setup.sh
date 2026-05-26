@@ -18,8 +18,9 @@ echo "  ✓ 완료"
 echo ""
 echo "[2/3] pip 패키지 설치..."
 pip install flask           && echo "  ✓ flask"
-pip install deep-translator && echo "  ✓ deep-translator"
-pip install transformers    && echo "  ✓ transformers (STT 백엔드)"
+pip install transformers    && echo "  ✓ transformers (STT + 번역 백엔드)"
+pip install sentencepiece   && echo "  ✓ sentencepiece (로컬 AI 번역)" || echo "  - sentencepiece 스킵 (Google Translate로 대체)"
+pip install deep-translator && echo "  ✓ deep-translator (번역 폴백)"
 pip install soundfile --no-deps 2>/dev/null && echo "  ✓ soundfile" || echo "  - soundfile 스킵"
 
 # ── 3단계: ASMRT 단축 명령 ────────────────────────────────────

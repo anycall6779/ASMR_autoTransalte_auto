@@ -151,16 +151,12 @@ progress{width:100%;height:10px;border-radius:5px;margin-bottom:8px;accent-color
 <!-- ─── 번역 ─── -->
 <div id="tab-translate" class="tab-panel">
   <div class="card">
-    <h2>웹 고퀄 번역 (API 없음)</h2>
-    <div style="font-size:.8rem;color:var(--sub);line-height:1.45">
-      1) 이 페이지에서 프롬프트 복사<br>
-      2) Gemini 웹에 붙여넣기<br>
-      3) JSON 배열 응답 복사<br>
-      4) 아래 입력칸에 붙여넣고 적용
-    </div>
-    <div style="margin-top:8px">
-      <button class="btn" onclick="openGeminiWeb()">🌐 Gemini 웹 열기</button>
-      <span style="font-size:.76rem;color:var(--sub);margin-left:8px">https://gemini.google.com/app</span>
+    <h2>자동 번역 <span style="font-size:.75rem;color:var(--green);font-weight:normal">무료 · API 불필요</span></h2>
+    <div style="font-size:.82rem;color:var(--sub);line-height:1.5">
+      <b style="color:var(--green)">1순위</b> — <b>로컬 AI 모델</b> (Helsinki-NLP/opus-mt)<br>
+      <span style="font-size:.77rem">오프라인, ~300MB, pip install sentencepiece 필요</span><br>
+      <b style="color:var(--accent)">2순위</b> — <b>Google Translate 무료</b> (sentencepiece 없을 때 자동 전환)<br>
+      <span style="font-size:.77rem">온라인, API 키 없음</span>
     </div>
   </div>
 
@@ -198,23 +194,6 @@ progress{width:100%;height:10px;border-radius:5px;margin-bottom:8px;accent-color
   </div>
 
   <button class="btn primary" style="width:100%;padding:12px;font-size:1rem;margin-top:4px" onclick="startTranslate()">▶ 번역 시작</button>
-
-  <div class="card" id="tr-manual-work" style="display:none;margin-top:12px">
-    <h2>수동 배치 번역 워크스페이스</h2>
-    <div id="tr-manual-meta" style="font-size:.8rem;color:var(--sub);margin-bottom:8px">대기 중</div>
-
-    <label>Gemini에 보낼 프롬프트</label>
-    <textarea id="tr-prompt" style="width:100%;height:120px;background:#11111b;color:var(--text);border:none;border-radius:8px;padding:8px;font-family:monospace;font-size:.78rem;resize:vertical" readonly></textarea>
-    <div style="display:flex;gap:8px;margin:8px 0 10px">
-      <button class="btn" onclick="copyPrompt()">📋 프롬프트 복사</button>
-      <button class="btn" onclick="openGeminiWeb()">🌐 Gemini 열기</button>
-    </div>
-
-    <label>Gemini 응답 붙여넣기 (JSON 배열)</label>
-    <textarea id="tr-response" style="width:100%;height:120px;background:#11111b;color:var(--text);border:none;border-radius:8px;padding:8px;font-family:monospace;font-size:.78rem;resize:vertical" placeholder='["번역1", "번역2", ...]'></textarea>
-    <button class="btn primary" style="margin-top:8px" onclick="applyTranslateBatch()">✅ 응답 적용 / 다음 배치</button>
-  </div>
-
   <div style="margin-top:12px">
     <progress id="tr-progress" value="0" max="100"></progress>
     <div class="log-box" id="tr-log"></div>
@@ -284,23 +263,7 @@ function toast(msg, ms=2500){
   setTimeout(()=>t.style.display='none', ms);
 }
 
-let trJobId='';
-let trGeminiUrl='https://gemini.google.com/app';
 
-function openGeminiWeb(){
-  window.open(trGeminiUrl,'_blank');
-}
-
-async function copyPrompt(){
-  const txt=document.getElementById('tr-prompt').value;
-  if(!txt){toast('복사할 프롬프트가 없습니다');return;}
-  try{
-    await navigator.clipboard.writeText(txt);
-    toast('📋 프롬프트 복사 완료');
-  }catch(e){
-    toast('클립보드 권한 없음: 길게 눌러 수동 복사');
-  }
-}
 
 // ── 업로드 ──
 let pendingFiles=[];
@@ -496,67 +459,17 @@ async function startStt(){
   subscribeTask(d.task_id, logEl, document.getElementById('stt-progress'), loadFiles);
 }
 
-// ── 번역 시작 (웹 수동 배치) ──
+// ── 번역 시작 (자동) ──
 async function startTranslate(){
   const files=[...document.querySelectorAll('.tr-cb:checked')].map(c=>c.value);
   if(!files.length){toast('SRT 파일을 선택하세요');return;}
-  if(files.length!==1){toast('웹 수동 모드는 SRT 1개씩 처리합니다');return;}
-
-  const body={file:files[0], src_lang:document.getElementById('tr-src').value, dst_lang:document.getElementById('tr-dst').value};
+  const body={files, src_lang:document.getElementById('tr-src').value, dst_lang:document.getElementById('tr-dst').value};
   const logEl=document.getElementById('tr-log');
-  logEl.textContent='';
-  const prog=document.getElementById('tr-progress');
-  prog.value=0;
-
-  const r=await fetch('/api/translate_web/start',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(body)});
+  logEl.textContent=''; document.getElementById('tr-progress').value=0;
+  const r=await fetch('/api/translate',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(body)});
   const d=await r.json();
-  if(d.error){toast('❌ '+d.error, 4000);return;}
-
-  trJobId=d.job_id;
-  trGeminiUrl=d.gemini_url || trGeminiUrl;
-  document.getElementById('tr-manual-work').style.display='block';
-  document.getElementById('tr-prompt').value=d.prompt_info.prompt;
-  document.getElementById('tr-response').value='';
-  document.getElementById('tr-manual-meta').textContent=`파일: ${d.file} | 배치 ${d.current_batch}/${d.total_batches} (${d.prompt_info.start}~${d.prompt_info.end}/${d.prompt_info.total})`;
-
-  logEl.textContent += `[시작] ${d.file}\n`;
-  logEl.textContent += `배치 ${d.current_batch}/${d.total_batches} 프롬프트 생성 완료\n`;
-  prog.value=Math.floor((d.current_batch-1)/d.total_batches*100);
-  toast('프롬프트를 복사해서 Gemini 웹에 붙여넣으세요');
-}
-
-async function applyTranslateBatch(){
-  if(!trJobId){toast('진행 중인 번역 작업이 없습니다');return;}
-
-  const response=document.getElementById('tr-response').value.trim();
-  if(!response){toast('Gemini 응답을 붙여넣으세요');return;}
-
-  const r=await fetch('/api/translate_web/apply',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({job_id:trJobId,response})});
-  const d=await r.json();
-  if(d.error){toast('❌ '+d.error, 4500);return;}
-
-  const logEl=document.getElementById('tr-log');
-  const prog=document.getElementById('tr-progress');
-
-  if(d.done){
-    logEl.textContent += `✓ 번역 완료: ${d.output}\n`;
-    prog.value=100;
-    trJobId='';
-    document.getElementById('tr-response').value='';
-    document.getElementById('tr-prompt').value='';
-    document.getElementById('tr-manual-meta').textContent='완료';
-    toast('✅ 번역 완료');
-    loadFiles();
-    loadTrFiles();
-    return;
-  }
-
-  document.getElementById('tr-prompt').value=d.prompt_info.prompt;
-  document.getElementById('tr-response').value='';
-  document.getElementById('tr-manual-meta').textContent=`배치 ${d.current_batch}/${d.total_batches} (${d.prompt_info.start}~${d.prompt_info.end}/${d.prompt_info.total})`;
-  logEl.textContent += `배치 ${d.current_batch-1} 적용 완료\n`;
-  prog.value=Math.floor((d.current_batch-1)/d.total_batches*100);
-  toast('다음 배치 프롬프트 생성됨');
+  if(d.error){toast('❌ '+d.error);return;}
+  subscribeTask(d.task_id, logEl, document.getElementById('tr-progress'), ()=>{loadFiles();loadTrFiles();});
 }
 
 // ── 영상 생성 시작 ──

@@ -8,6 +8,7 @@ ASMR Studio — Flask 웹 서버 (Termux용)
 import json
 import os
 import queue
+import math
 import subprocess
 import sys
 import threading
@@ -33,6 +34,9 @@ app.config["MAX_CONTENT_LENGTH"] = 2 * 1024 * 1024 * 1024  # 2GB
 # ── 작업 관리 ──────────────────────────────────────────────
 _tasks: dict = {}
 _tasks_lock = threading.Lock()
+
+_web_translate_jobs: dict = {}
+_web_translate_lock = threading.Lock()
 
 AUDIO_EXTS = {".wav", ".mp3", ".flac", ".m4a", ".ogg", ".aac", ".opus"}
 SRT_EXTS   = {".srt"}
@@ -239,7 +243,126 @@ def api_transcribe():
     return jsonify({"task_id": tid})
 
 
+# ── Gemini API 키 관리 ─────────────────────────────────────────
+@app.route("/api/gemini_key", methods=["GET"])
+def api_gemini_key_get():
+    from translator import load_api_key
+    key = load_api_key()
+    return jsonify({"has_key": bool(key), "masked": (key[:6] + "..." if key else "")})
+
+
+@app.route("/api/gemini_key", methods=["POST"])
+def api_gemini_key_set():
+    key = (request.json or {}).get("key", "").strip()
+    if not key:
+        return jsonify({"error": "API 키를 입력하세요"}), 400
+    from translator import save_api_key
+    save_api_key(key)
+    return jsonify({"ok": True})
+
+
 # ── 번역 ────────────────────────────────────────────────────
+@app.route("/api/translate_web/start", methods=["POST"])
+def api_translate_web_start():
+    data = request.json or {}
+    fname = data.get("file", "")
+    src_lang = data.get("src_lang", "ja")
+    dst_lang = data.get("dst_lang", "ko")
+
+    if not fname:
+        return jsonify({"error": "SRT 파일을 선택하세요"}), 400
+
+    fpath = OUTPUT_DIR / fname
+    if not fpath.exists():
+        fpath = UPLOAD_DIR / fname
+    if not fpath.exists():
+        return jsonify({"error": f"파일 없음: {fname}"}), 404
+
+    try:
+        from translator import create_web_translation_job, get_web_job_prompt
+
+        out_name = f"{fpath.stem}_{dst_lang}.srt"
+        out_path = OUTPUT_DIR / out_name
+        job = create_web_translation_job(
+            str(fpath),
+            src_lang=src_lang,
+            dst_lang=dst_lang,
+            output_path=str(out_path),
+        )
+        first = get_web_job_prompt(job)
+        if first is None:
+            return jsonify({"error": "번역할 블록이 없습니다."}), 400
+
+        job_id = uuid.uuid4().hex
+        with _web_translate_lock:
+            _web_translate_jobs[job_id] = job
+
+        total = first["total"]
+        batch_size = job["batch_size"]
+        total_batches = math.ceil(total / batch_size)
+        current_batch = math.ceil(first["start"] / batch_size)
+
+        return jsonify({
+            "ok": True,
+            "job_id": job_id,
+            "file": fname,
+            "output": out_name,
+            "total_blocks": total,
+            "total_batches": total_batches,
+            "current_batch": current_batch,
+            "prompt_info": first,
+            "gemini_url": "https://gemini.google.com/app",
+        })
+    except Exception as e:
+        return jsonify({"error": str(e)}), 500
+
+
+@app.route("/api/translate_web/apply", methods=["POST"])
+def api_translate_web_apply():
+    data = request.json or {}
+    job_id = data.get("job_id", "")
+    response_text = data.get("response", "")
+
+    if not job_id:
+        return jsonify({"error": "job_id가 필요합니다."}), 400
+    if not response_text.strip():
+        return jsonify({"error": "Gemini 응답을 붙여넣어 주세요."}), 400
+
+    with _web_translate_lock:
+        job = _web_translate_jobs.get(job_id)
+
+    if not job:
+        return jsonify({"error": "번역 작업을 찾을 수 없습니다."}), 404
+
+    try:
+        from translator import apply_web_job_response, finalize_web_translation_job
+
+        result = apply_web_job_response(job, response_text)
+        if result.get("done"):
+            saved = finalize_web_translation_job(job)
+            out_name = Path(saved).name
+            with _web_translate_lock:
+                _web_translate_jobs.pop(job_id, None)
+            return jsonify({"ok": True, "done": True, "output": out_name})
+
+        next_info = result["next"]
+        total = next_info["total"]
+        batch_size = job["batch_size"]
+        total_batches = math.ceil(total / batch_size)
+        current_batch = math.ceil(next_info["start"] / batch_size)
+
+        return jsonify({
+            "ok": True,
+            "done": False,
+            "total_batches": total_batches,
+            "current_batch": current_batch,
+            "prompt_info": next_info,
+            "gemini_url": "https://gemini.google.com/app",
+        })
+    except Exception as e:
+        return jsonify({"error": str(e)}), 400
+
+
 @app.route("/api/translate", methods=["POST"])
 def api_translate():
     data      = request.json or {}
@@ -276,6 +399,7 @@ def api_translate():
                     str(fpath), src_lang, dst_lang,
                     str(out_path),
                     log_fn=_log, progress_fn=_prog,
+                    api_key=os.environ.get("GEMINI_API_KEY", ""),
                 )
                 _task_log(tid, f"  ✓ {out_name}")
                 _task_prog(tid, int((i + 1) * 100 / total))
