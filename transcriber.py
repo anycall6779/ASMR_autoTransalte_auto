@@ -1,4 +1,7 @@
 # -*- coding: utf-8 -*-
+# HuggingFace hf-xet 다운로더 비활성화 (Android/Termux rustls 오류 방지)
+import os
+os.environ.setdefault("HF_HUB_DISABLE_XET", "1")
 """
 ASMR 음성 인식 모듈 (Termux / CPU-only)
 백엔드 우선순위:
@@ -302,6 +305,7 @@ def _transcribe_transformers(
         torch_dtype=torch.float32,
         chunk_length_s=30,
         stride_length_s=5,
+        ignore_warning=True,
     )
     prog(40)
 
@@ -309,8 +313,10 @@ def _transcribe_transformers(
     result = pipe(
         audio_path,
         return_timestamps=True,
-        generate_kwargs={"language": language, "task": "transcribe",
-                         "initial_prompt": ASMR_PROMPTS.get(language, "")},
+        generate_kwargs={
+            "language": language,
+            "task": "transcribe",
+        },
     )
     prog(85)
 
