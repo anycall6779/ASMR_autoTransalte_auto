@@ -287,56 +287,88 @@ def _transcribe_whisper_cpp(
 
 # ─────────────────────────────────────────────────────────────
 # 백엔드 3: HuggingFace transformers (torch 필요)
+# pipeline 대신 model.generate() 직접 호용 — hang 해결
 # ─────────────────────────────────────────────────────────────
 def _transcribe_transformers(
     audio_path, model_size, language,
     log, prog,
 ):
     import torch
-    from transformers import pipeline
+    import soundfile as sf
+    import numpy as np
+    from transformers import WhisperProcessor, WhisperForConditionalGeneration
 
     model_id = f"openai/whisper-{model_size}"
-    log(f"  모델: {model_id} (첫 실행 시 다운로드)")
+    log(f"  모델: {model_id} (첫 실행 시 자동 다운로드)")
 
-    pipe = pipeline(
-        "automatic-speech-recognition",
-        model=model_id,
-        device="cpu",
-        torch_dtype=torch.float32,
-        chunk_length_s=30,
-        stride_length_s=5,
-        ignore_warning=True,
-    )
-    prog(40)
+    processor = WhisperProcessor.from_pretrained(model_id)
+    model = WhisperForConditionalGeneration.from_pretrained(model_id)
+    model.eval()
+    prog(35)
 
-    log("  음성 인식 중...")
-    result = pipe(
-        audio_path,
-        return_timestamps=True,
-        generate_kwargs={
-            "language": language,
-            "task": "transcribe",
-        },
-    )
-    prog(85)
+    # 16kHz WAV 읽기 (ffmpeg가 이미 변환해 놓은 tmp 파일)
+    audio_array, sr = sf.read(audio_path)
+    if audio_array.ndim > 1:
+        audio_array = audio_array.mean(axis=1).astype(np.float32)
+    else:
+        audio_array = audio_array.astype(np.float32)
 
-    chunks = result.get("chunks", [])
-    if not chunks:
-        text = result.get("text", "").strip()
+    CHUNK = 16000 * 28           # 28씽 청크 (Whisper 30시 제한 이하)
+    total_chunks = max(1, int(np.ceil(len(audio_array) / CHUNK)))
+    segments = []
+
+    log(f"  음성 인식 중... ({total_chunks}개 청크)")
+    for ci in range(total_chunks):
+        chunk = audio_array[ci * CHUNK : (ci + 1) * CHUNK]
+        if len(chunk) < 400:
+            break
+
+        inputs = processor(chunk, sampling_rate=16000, return_tensors="pt")
+        with torch.no_grad():
+            predicted_ids = model.generate(
+                inputs.input_features,
+                language=language,
+                task="transcribe",
+                return_timestamps=True,
+            )
+
+        decoded = processor.decode(
+            predicted_ids[0],
+            output_offsets=True,
+            skip_special_tokens=True,
+        )
+        offset_sec = ci * CHUNK / 16000
+        for seg in decoded.get("offsets", []):
+            ts   = seg.get("timestamp", (None, None))
+            text = seg.get("text", "").strip()
+            if not text:
+                continue
+            t0 = (ts[0] if ts[0] is not None else 0.0) + offset_sec
+            t1 = (ts[1] if ts[1] is not None else t0 + 3.0) + offset_sec
+            segments.append({"start": t0, "end": t1, "text": text})
+
+        prog(35 + int((ci + 1) / total_chunks * 50))
+        log(f"    청크 {ci + 1}/{total_chunks} 완료")
+
+    # fallback: offsets 없으면 전체 텍스트 하나의 세그먼트로
+    if not segments:
+        with torch.no_grad():
+            ids = model.generate(
+                processor(audio_array[:CHUNK], sampling_rate=16000,
+                          return_tensors="pt").input_features,
+                language=language, task="transcribe",
+            )
+        text = processor.batch_decode(ids, skip_special_tokens=True)[0].strip()
         if text:
-            chunks = [{"text": text, "timestamp": (0.0, 3.0)}]
+            segments = [{"start": 0.0, "end": 5.0, "text": text}]
 
     srt_lines, idx = [], 1
-    for chunk in chunks:
-        text = chunk.get("text", "").strip()
-        if not text:
-            continue
-        ts    = chunk.get("timestamp", (0.0, 3.0))
-        start = ts[0] if ts[0] is not None else 0.0
-        end   = ts[1] if ts[1] is not None else start + 3.0
-        srt_lines += [str(idx),
-                      f"{seconds_to_srt_time(start)} --> {seconds_to_srt_time(end)}",
-                      text, ""]
+    for seg in segments:
+        srt_lines += [
+            str(idx),
+            f"{seconds_to_srt_time(seg['start'])} --> {seconds_to_srt_time(seg['end'])}",
+            seg["text"], "",
+        ]
         idx += 1
     prog(90)
     return srt_lines
