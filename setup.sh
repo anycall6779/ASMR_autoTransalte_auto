@@ -11,7 +11,7 @@ SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
 # ── 1단계: 시스템 패키지 ─────────────────────────────────────
 echo "[1/3] 시스템 패키지 설치..."
 pkg update -y
-pkg install -y python ffmpeg libsndfile git rust
+pkg install -y python ffmpeg libsndfile git rust python-torch
 echo "  ✓ 완료"
 
 # ── 2단계: pip 패키지 ─────────────────────────────────────────

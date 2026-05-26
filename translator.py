@@ -47,7 +47,7 @@ def _translate_batch(
     dst: str,
     log_fn=None,
 ) -> List[str]:
-    """deep_translator로 텍스트 리스트 번역"""
+    """deep_translator로 텍스트 리스트 번역 (구분자 합치기 → 1번 API 요청)"""
     try:
         from deep_translator import GoogleTranslator
     except ImportError:
@@ -59,6 +59,20 @@ def _translate_batch(
     dst_code = LANG_MAP.get(dst, dst)
     translator = GoogleTranslator(source=src_code, target=dst_code)
 
+    # 텍스트 내 줄바꿈 → 공백 치환 후 구분자로 합쳐서 1번 요청
+    SEP = " ▶ "
+    combined = SEP.join(t.replace("\n", " ") for t in texts)
+    try:
+        translated_combined = translator.translate(combined)
+        if translated_combined:
+            parts = translated_combined.split(SEP)
+            if len(parts) == len(texts):
+                return [p.strip() for p in parts]
+    except Exception as e:
+        if log_fn:
+            log_fn(f"  ⚠ 배치 번역 실패, 개별 시도: {e}")
+
+    # 폴백: 개별 번역
     results = []
     for text in texts:
         try:

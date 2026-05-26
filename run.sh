@@ -18,4 +18,5 @@ python -c "import flask" 2>/dev/null || {
     exit 1
 }
 
+export HF_HUB_DISABLE_XET=1
 python app.py
