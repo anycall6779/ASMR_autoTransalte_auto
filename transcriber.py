@@ -1,21 +1,41 @@
 # -*- coding: utf-8 -*-
 """
 ASMR 음성 인식 모듈 (Termux / CPU-only)
-- faster-whisper (우선) / openai-whisper (폴백)
-- GPU 없이 항상 CPU int8 실행
-- 기본 모델: small (모바일 메모리 배려)
+백엔드 우선순위:
+  1. faster-whisper  (ctranslate2 설치된 경우)
+  2. whisper.cpp     (~/whisper.cpp/main 컴파일된 경우) ← 권장
+  3. transformers    (torch + HuggingFace, tokenizers 설치된 경우)
+  4. none → 오류
+
+whisper.cpp 설치:
+  pkg install clang make git
+  cd ~ && git clone https://github.com/ggerganov/whisper.cpp --depth=1
+  cd whisper.cpp && make -j$(nproc) main
+  bash models/download-ggml-model.sh small
 """
 
 import os
+import subprocess
 import tempfile
 import numpy as np
 from pathlib import Path
 
+# whisper.cpp 바이너리 후보 경로
+_WCPP_CANDIDATES = [
+    os.path.expanduser("~/whisper.cpp/main"),
+    os.path.expanduser("~/whisper.cpp/build/bin/whisper-cli"),
+    "/data/data/com.termux/files/usr/bin/whisper-cli",
+    "/data/data/com.termux/files/usr/bin/whisper",
+]
+
+# whisper.cpp 모델 디렉터리
+_WCPP_MODEL_DIR = os.path.expanduser("~/whisper.cpp/models")
+
 
 def seconds_to_srt_time(seconds: float) -> str:
-    h = int(seconds // 3600)
-    m = int((seconds % 3600) // 60)
-    s = int(seconds % 60)
+    h  = int(seconds // 3600)
+    m  = int((seconds % 3600) // 60)
+    s  = int(seconds % 60)
     ms = int(round((seconds % 1) * 1000))
     if ms >= 1000:
         ms = 999
@@ -30,44 +50,44 @@ ASMR_PROMPTS = {
 }
 
 
-def _ensure_numba_mock():
-    """
-    openai-whisper의 timing.py가 numba를 무조건 import함.
-    numba 미설치 시 mock으로 대체하여 import 성공.
-    word_timestamps=False 사용 시 numba JIT 실제 호출 없음.
-    """
-    import sys
-    try:
-        import numba  # noqa
-    except ImportError:
-        class _JitDecorator:
-            def __call__(self, *a, **kw):
-                def dec(fn): return fn
-                return dec
-            def __getattr__(self, name):
-                return self
-        _jit = _JitDecorator()
-        mock = type('numba', (), {
-            'jit': _jit,
-            'float32': float,
-            'int32': int,
-            'int64': int,
-        })()
-        sys.modules.setdefault('numba', mock)
-        sys.modules.setdefault('numba.core', mock)
-        sys.modules.setdefault('numba.core.types', mock)
+def _find_wcpp_binary() -> str | None:
+    """whisper.cpp 바이너리 경로 탐색."""
+    for p in _WCPP_CANDIDATES:
+        if os.path.isfile(p) and os.access(p, os.X_OK):
+            return p
+    return None
+
+
+def _find_wcpp_model(model_size: str) -> str | None:
+    """ggml 모델 파일 탐색."""
+    names = [
+        f"ggml-{model_size}.bin",
+        f"ggml-{model_size}-q5_1.bin",
+        f"ggml-{model_size}-q8_0.bin",
+    ]
+    for name in names:
+        p = os.path.join(_WCPP_MODEL_DIR, name)
+        if os.path.isfile(p):
+            return p
+    return None
 
 
 def detect_whisper_backend() -> str:
-    _ensure_numba_mock()
+    """설치된 STT 백엔드 자동 감지."""
+    # 1) faster-whisper
     try:
         import faster_whisper  # noqa
         return "faster_whisper"
     except ImportError:
         pass
+    # 2) whisper.cpp 바이너리
+    if _find_wcpp_binary():
+        return "whisper_cpp"
+    # 3) HuggingFace transformers
     try:
-        import whisper  # noqa
-        return "openai_whisper"
+        import transformers  # noqa
+        import torch          # noqa
+        return "transformers"
     except ImportError:
         pass
     return "none"
@@ -75,7 +95,7 @@ def detect_whisper_backend() -> str:
 
 def transcribe_audio(
     audio_path: str,
-    model_size: str = "small",        # Termux 기본: small (메모리 절약)
+    model_size: str = "small",
     language: str = "ja",
     use_denoise: bool = True,
     denoise_strength: float = 0.55,
@@ -111,20 +131,33 @@ def transcribe_audio(
 
     audio = normalize_audio(audio)
 
+    # whisper.cpp는 16kHz mono WAV 필요
     tmp_fd, tmp_path = tempfile.mkstemp(suffix=".wav")
     os.close(tmp_fd)
     try:
-        sf.write(tmp_path, audio, sr)
+        # 16kHz 리샘플 (필요 시)
+        if sr != 16000:
+            try:
+                import scipy.signal as sg
+                samples_16k = int(len(audio) * 16000 / sr)
+                audio = sg.resample(audio, samples_16k).astype(np.float32)
+                sr = 16000
+            except ImportError:
+                pass  # scipy 없으면 원본 sr 그대로 사용
+        sf.write(tmp_path, audio, sr, subtype="PCM_16")
 
         backend = detect_whisper_backend()
+        log(f"[{audio_path.name}] 백엔드: {backend} / 모델: {model_size}")
+        prog(25)
+
         if backend == "none":
             raise ImportError(
-                "faster-whisper 또는 openai-whisper가 설치되지 않았습니다.\n"
-                "setup.sh 를 실행하세요."
+                "STT 백엔드가 없습니다.\n"
+                "▶ 권장: pkg install clang make git\n"
+                "  cd ~ && git clone https://github.com/ggerganov/whisper.cpp --depth=1\n"
+                "  cd whisper.cpp && make -j$(nproc) main\n"
+                "  bash models/download-ggml-model.sh small"
             )
-
-        log(f"[{audio_path.name}] Whisper 로드 중 ({model_size}, {backend}, CPU)...")
-        prog(25)
 
         if backend == "faster_whisper":
             srt_lines = _transcribe_faster_whisper(
@@ -132,10 +165,15 @@ def transcribe_audio(
                 vad_threshold, no_speech_threshold,
                 beam_size, cpu_threads, log, prog,
             )
-        else:
-            srt_lines = _transcribe_openai_whisper(
+        elif backend == "whisper_cpp":
+            srt_lines = _transcribe_whisper_cpp(
                 tmp_path, model_size, language,
-                no_speech_threshold, log, prog,
+                cpu_threads, log, prog,
+            )
+        else:
+            srt_lines = _transcribe_transformers(
+                tmp_path, model_size, language,
+                log, prog,
             )
     finally:
         try:
@@ -153,108 +191,163 @@ def transcribe_audio(
     return str(output_srt)
 
 
+# ─────────────────────────────────────────────────────────────
+# 백엔드 1: faster-whisper
+# ─────────────────────────────────────────────────────────────
 def _transcribe_faster_whisper(
     audio_path, model_size, language,
     vad_threshold, no_speech_threshold,
-    beam_size, cpu_threads,
-    log, prog,
+    beam_size, cpu_threads, log, prog,
 ):
     from faster_whisper import WhisperModel
 
-    # Termux: 항상 CPU + int8
-    device = "cpu"
-    compute_type = "int8"
     _threads = cpu_threads if cpu_threads > 0 else (os.cpu_count() or 4)
-    _workers = min(2, _threads // 4) or 1
-
-    log(f"  디바이스: CPU / compute_type: {compute_type} / threads: {_threads}")
-
-    model = WhisperModel(
-        model_size,
-        device=device,
-        compute_type=compute_type,
-        cpu_threads=_threads,
-        num_workers=_workers,
-    )
+    model = WhisperModel(model_size, device="cpu", compute_type="int8",
+                         cpu_threads=_threads, num_workers=1)
     prog(40)
 
-    _best_of = beam_size if beam_size > 1 else 1
-
     segments, info = model.transcribe(
-        audio_path,
-        language=language,
-        beam_size=beam_size,
-        best_of=_best_of,
-        temperature=0.0,
+        audio_path, language=language,
+        beam_size=beam_size, temperature=0.0,
         condition_on_previous_text=True,
         initial_prompt=ASMR_PROMPTS.get(language, ""),
         vad_filter=True,
-        vad_parameters={
-            "threshold": vad_threshold,
-            "min_speech_duration_ms": 100,
-            "min_silence_duration_ms": 500,
-            "speech_pad_ms": 300,
-        },
+        vad_parameters={"threshold": vad_threshold, "min_speech_duration_ms": 100,
+                        "min_silence_duration_ms": 500, "speech_pad_ms": 300},
         no_speech_threshold=no_speech_threshold,
-        log_prob_threshold=-1.0,
-        compression_ratio_threshold=2.4,
         word_timestamps=False,
     )
-
-    log(f"  감지 언어: {info.language} (확률 {info.language_probability:.2f})")
+    log(f"  감지 언어: {info.language} ({info.language_probability:.2f})")
     prog(60)
 
-    srt_lines = []
-    idx = 1
+    srt_lines, idx = [], 1
     for seg in segments:
         text = seg.text.strip()
         if not text:
             continue
-        srt_lines.append(str(idx))
-        srt_lines.append(f"{seconds_to_srt_time(seg.start)} --> {seconds_to_srt_time(seg.end)}")
-        srt_lines.append(text)
-        srt_lines.append("")
+        srt_lines += [str(idx),
+                      f"{seconds_to_srt_time(seg.start)} --> {seconds_to_srt_time(seg.end)}",
+                      text, ""]
         idx += 1
-
     prog(90)
     return srt_lines
 
 
-def _transcribe_openai_whisper(
+# ─────────────────────────────────────────────────────────────
+# 백엔드 2: whisper.cpp subprocess ← Termux 권장
+# pkg install clang make && cd ~/whisper.cpp && make main
+# ─────────────────────────────────────────────────────────────
+def _transcribe_whisper_cpp(
     audio_path, model_size, language,
-    no_speech_threshold, log, prog,
+    cpu_threads, log, prog,
 ):
-    _ensure_numba_mock()  # numba mock 주입 후 import
-    import whisper
+    binary = _find_wcpp_binary()
+    model  = _find_wcpp_model(model_size)
 
-    model = whisper.load_model(model_size)
+    if model is None:
+        log(f"  모델 없음. 다운로드 중: {model_size} ...")
+        dl_script = os.path.join(_WCPP_MODEL_DIR, "..", "models", "download-ggml-model.sh")
+        dl_script = os.path.normpath(dl_script)
+        subprocess.run(["bash", dl_script, model_size],
+                       cwd=os.path.dirname(binary), check=True)
+        model = _find_wcpp_model(model_size)
+        if model is None:
+            raise FileNotFoundError(f"모델 다운로드 실패: {model_size}")
+
+    _threads = str(cpu_threads if cpu_threads > 0 else (os.cpu_count() or 4))
+    lang_arg = language if language else "auto"
+
+    # 임시 SRT 출력 경로
+    srt_out = audio_path + "_wcpp"
+
+    cmd = [
+        binary,
+        "-m", model,
+        "-f", audio_path,
+        "-l", lang_arg,
+        "-t", _threads,
+        "-osrt",          # SRT 출력
+        "-of", srt_out,   # 출력 파일 prefix
+        "--no-prints",    # 진행 출력 억제 (없으면 생략)
+    ]
+    log(f"  whisper.cpp 실행 중 (threads={_threads})...")
     prog(40)
-    log("  openai-whisper 백엔드 사용 중")
 
-    result = model.transcribe(
-        audio_path,
-        language=language,
-        fp16=False,
-        initial_prompt=ASMR_PROMPTS.get(language, ""),
-        no_speech_threshold=no_speech_threshold,
-        condition_on_previous_text=True,
-        temperature=0.0,
-    )
-
+    proc = subprocess.run(cmd, capture_output=True, text=True)
     prog(85)
-    srt_lines = []
-    idx = 1
-    for seg in result.get("segments", []):
-        text = seg["text"].strip()
+
+    srt_file = srt_out + ".srt"
+    if os.path.isfile(srt_file):
+        with open(srt_file, encoding="utf-8") as f:
+            content = f.read().strip()
+        os.unlink(srt_file)
+        return content.split("\n") if content else []
+
+    # --no-prints 미지원 시 stderr 없이 재시도
+    if proc.returncode != 0:
+        cmd_retry = [x for x in cmd if x != "--no-prints"]
+        proc = subprocess.run(cmd_retry, capture_output=True, text=True)
+        srt_file = srt_out + ".srt"
+        if os.path.isfile(srt_file):
+            with open(srt_file, encoding="utf-8") as f:
+                content = f.read().strip()
+            os.unlink(srt_file)
+            return content.split("\n") if content else []
+        raise RuntimeError(f"whisper.cpp 오류:\n{proc.stderr[-500:]}")
+
+    prog(90)
+    return []
+
+
+# ─────────────────────────────────────────────────────────────
+# 백엔드 3: HuggingFace transformers (torch 필요)
+# ─────────────────────────────────────────────────────────────
+def _transcribe_transformers(
+    audio_path, model_size, language,
+    log, prog,
+):
+    import torch
+    from transformers import pipeline
+
+    model_id = f"openai/whisper-{model_size}"
+    log(f"  모델: {model_id} (첫 실행 시 다운로드)")
+
+    pipe = pipeline(
+        "automatic-speech-recognition",
+        model=model_id,
+        device="cpu",
+        torch_dtype=torch.float32,
+        chunk_length_s=30,
+        stride_length_s=5,
+    )
+    prog(40)
+
+    log("  음성 인식 중...")
+    result = pipe(
+        audio_path,
+        return_timestamps=True,
+        generate_kwargs={"language": language, "task": "transcribe",
+                         "initial_prompt": ASMR_PROMPTS.get(language, "")},
+    )
+    prog(85)
+
+    chunks = result.get("chunks", [])
+    if not chunks:
+        text = result.get("text", "").strip()
+        if text:
+            chunks = [{"text": text, "timestamp": (0.0, 3.0)}]
+
+    srt_lines, idx = [], 1
+    for chunk in chunks:
+        text = chunk.get("text", "").strip()
         if not text:
             continue
-        srt_lines.append(str(idx))
-        srt_lines.append(
-            f"{seconds_to_srt_time(seg['start'])} --> {seconds_to_srt_time(seg['end'])}"
-        )
-        srt_lines.append(text)
-        srt_lines.append("")
+        ts    = chunk.get("timestamp", (0.0, 3.0))
+        start = ts[0] if ts[0] is not None else 0.0
+        end   = ts[1] if ts[1] is not None else start + 3.0
+        srt_lines += [str(idx),
+                      f"{seconds_to_srt_time(start)} --> {seconds_to_srt_time(end)}",
+                      text, ""]
         idx += 1
-
     prog(90)
     return srt_lines
