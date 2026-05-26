@@ -55,6 +55,7 @@ progress{width:100%;height:10px;border-radius:5px;margin-bottom:8px;accent-color
 <header>
   <span style="font-size:1.4rem">🎙</span>
   <h1>ASMR Studio <span style="font-size:.75rem;color:var(--sub);">Termux Web UI</span></h1>
+  <button class="btn danger" style="margin-left:auto;font-size:.8rem" onclick="shutdownServer()">⏻ 서버 종료</button>
 </header>
 
 <nav>
@@ -78,12 +79,19 @@ progress{width:100%;height:10px;border-radius:5px;margin-bottom:8px;accent-color
   </div>
 
   <div class="card">
-    <h2>업로드된 파일 <button class="btn" style="float:right;font-size:.75rem" onclick="loadFiles()">🔄 새로고침</button></h2>
+    <h2>업로드된 파일
+      <span style="float:right;display:flex;gap:6px">
+        <button class="btn danger" style="font-size:.75rem" onclick="deleteAll('uploads')">🗑 전체삭제</button>
+        <button class="btn" style="font-size:.75rem" onclick="loadFiles()">🔄 새로고침</button>
+      </span>
+    </h2>
     <div class="file-list" id="upload-list">로딩 중...</div>
   </div>
 
   <div class="card">
-    <h2>출력 파일</h2>
+    <h2>출력 파일
+      <button class="btn danger" style="float:right;font-size:.75rem" onclick="deleteAll('outputs')">🗑 전체삭제</button>
+    </h2>
     <div class="file-list" id="output-list">로딩 중...</div>
   </div>
 </div>
@@ -95,9 +103,9 @@ progress{width:100%;height:10px;border-radius:5px;margin-bottom:8px;accent-color
     <div class="row">
       <label>모델 크기</label>
       <select id="stt-model">
-        <option value="tiny">tiny (최소 메모리)</option>
+        <option value="tiny" selected>tiny (Termux 권장 — 4배 빠름)</option>
         <option value="base">base</option>
-        <option value="small" selected>small (권장)</option>
+        <option value="small">small (느림)</option>
         <option value="medium">medium</option>
         <option value="large-v2">large-v2</option>
         <option value="large-v3-turbo">large-v3-turbo</option>
@@ -326,6 +334,22 @@ async function loadFiles(){
 async function delFile(name,folder){
   await fetch('/api/delete',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({name,folder})});
   loadFiles();
+}
+
+async function deleteAll(folder){
+  const label=folder==='uploads'?'업로드 파일':'출력 파일';
+  if(!confirm(`⚠️ ${label} 전체를 삭제하시걐습니까?`)) return;
+  const r=await fetch('/api/delete_all',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({folder})});
+  const d=await r.json();
+  toast(`🗑 ${d.deleted}개 삭제됨`);
+  loadFiles();
+}
+
+async function shutdownServer(){
+  if(!confirm('⚠️ 서버를 종료하시걐습니까?\n(재시작: bash run.sh)')) return;
+  toast('서버 종료 중...', 3000);
+  await fetch('/api/shutdown',{method:'POST'}).catch(()=>{});
+  document.body.innerHTML='<div style="color:#f38ba8;text-align:center;padding:60px;font-size:1.2rem">서버가 종료되었습니다.<br><br><small>재시작: bash run.sh</small></div>';
 }
 
 // ── STT 파일 목록 ──

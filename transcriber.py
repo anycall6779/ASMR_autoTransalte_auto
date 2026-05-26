@@ -98,7 +98,7 @@ def detect_whisper_backend() -> str:
 
 def transcribe_audio(
     audio_path: str,
-    model_size: str = "small",
+    model_size: str = "tiny",        # Termux 기본: tiny (모바일 CPU 최적화, small보다 4배 빠름)
     language: str = "ja",
     use_denoise: bool = True,
     denoise_strength: float = 0.55,

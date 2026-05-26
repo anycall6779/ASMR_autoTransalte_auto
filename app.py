@@ -155,6 +155,32 @@ def api_delete():
     return jsonify({"error": "파일 없음"}), 404
 
 
+# 전체 파일 삭제
+@app.route("/api/delete_all", methods=["POST"])
+def api_delete_all():
+    data   = request.json or {}
+    folder = data.get("folder", "uploads")
+    base   = UPLOAD_DIR if folder == "uploads" else OUTPUT_DIR
+    count  = 0
+    for f in base.iterdir():
+        if f.is_file():
+            f.unlink()
+            count += 1
+    return jsonify({"ok": True, "deleted": count})
+
+
+# 서버 종료
+@app.route("/api/shutdown", methods=["POST"])
+def api_shutdown():
+    import signal
+    def _kill():
+        time.sleep(0.5)
+        os.kill(os.getpid(), signal.SIGTERM)
+    threading.Thread(target=_kill, daemon=True).start()
+    return jsonify({"ok": True, "msg": "서버를 종료합니다..."})
+
+
+
 # ── STT 자막 생성 ───────────────────────────────────────────
 @app.route("/api/transcribe", methods=["POST"])
 def api_transcribe():
